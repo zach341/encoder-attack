@@ -310,12 +310,13 @@ def train_perturb(encoders, dataloader, optimizer_encoder, args, epoch, method='
 
 def train_with_gan_1(train_loader, generator, encoders, optimizers, args):
     ### 使用生成器生成对抗样本，两个编码器关于对抗样本对齐
-    criterion_l2 = nn.MSELoss()
+    
     clone_encoder, target_encoder = encoders
     G_optimizer,encoder_optimizers = optimizers
     target_encoder.eval()
     clone_encoder.train()
     generator.train()
+
     for module in clone_encoder.modules():
         if isinstance(module, nn.BatchNorm2d):
             if hasattr(module, 'weight'):
@@ -324,10 +325,11 @@ def train_with_gan_1(train_loader, generator, encoders, optimizers, args):
                 module.bias.requires_grad_(False)
             module.eval()
     
+    criterion_l2 = nn.MSELoss()
     # criterion_constrastive = nn.CosineSimilarity(dim=0, eps=1e-6)
     # criterion_constrastive = simlilary_loss()
-    # criterion_constrastive = InfoNCE()
-    criterion_constrastive = nn.MSELoss()
+    criterion_constrastive = InfoNCE()
+    # criterion_constrastive = nn.MSELoss()
     
     eps = 10/255
     G_loss_all = 0.0
@@ -339,8 +341,10 @@ def train_with_gan_1(train_loader, generator, encoders, optimizers, args):
         f_x = generator(imgs)
         f_x = torch.min(torch.max(f_x, imgs - eps), f_x + eps)
         f_x = torch.clamp(f_x, 0.0, 1.0)
+        
         x = imgs
 
+        reconstruction_loss = criterion_l2(f_x, x)
         ## 减小高频特征
         clean_hfc = generate_high(x, r=8)
         per_hfc = generate_high(f_x, r=8)
@@ -351,11 +355,12 @@ def train_with_gan_1(train_loader, generator, encoders, optimizers, args):
             target_feature = target_encoder(f_x)
             target_feature = F.normalize(target_feature, dim=-1)
 
+        ## 对抗损失 
         clone_feature = clone_encoder(f_x)
         clone_feature = F.normalize(clone_feature, dim=-1)
-        adv_loss = - criterion_constrastive(clone_feature, target_feature)
+        adv_loss = - criterion_constrastive(clone_feature, target_feature).mean()
 
-        G_loss = adv_loss + HFC_loss
+        G_loss = 5 * adv_loss + HFC_loss + reconstruction_loss
         G_loss_all += G_loss
 
         generator.zero_grad()
@@ -366,8 +371,8 @@ def train_with_gan_1(train_loader, generator, encoders, optimizers, args):
         clone_feature = clone_encoder(f_x.detach())
         clone_feature = F.normalize(clone_feature, dim=-1)
 
-        #D_loss = criterion_constrastive(clone_feature, target_feature).mean()
-        D_loss = criterion_constrastive(clone_feature, target_feature)
+        # distribution matching
+        D_loss = - torch.sum(clone_feature * target_feature, dim=-1).mean()
         D_loss_all += D_loss
         
         clone_encoder.zero_grad()
@@ -613,8 +618,9 @@ if __name__ == '__main__':
 
     ############################################## generator definition ############################################
 
-    # generator = GeneratorResnet().cuda()
-    generator = Generator_2(nz=nz, ngf=64, img_size=img_size, nc=nc).cuda()
+    ## train_with_gan_1 generator
+    generator = GeneratorResnet().cuda()
+    # generator = Generator_2(nz=nz, ngf=64, img_size=img_size, nc=nc).cuda()
     # generator = Generator(100, [1024, 512, 256], 3, args.batch_size).cuda()
     # generator = Generator_4(0).cuda()
     # generator.apply(weights_init)
@@ -622,9 +628,10 @@ if __name__ == '__main__':
     # state_dict_g = torch.load('/data2/ZC/Bad_encoder_copy_1/saved_model/netG_epoch_199.pth')
     # generator.load_state_dict(state_dict_g)
 
-    # optimizer_generator = torch.optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5,0.999))
+    ## train_with_gan_1 optimizer 
+    optimizer_generator = torch.optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5,0.999))
     # optimizer_generator = torch.optim.Adam(generator.parameters(), lr = 1e-3)
-    # optimizer_generator = torch.optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
+    
     # z = torch.randn(args.batch_size, 100).view(-1, 100, 1,1)
     # z = Variable(z.cuda())
 
@@ -728,12 +735,12 @@ if __name__ == '__main__':
             
             # train_perturb([model.f, clean_model.f], train_loader, optimizer_encoder, args, epoch, method='pgd')
             
-            # train_with_gan_1(train_loader, generator, [model.f, clean_model.f], [optimizer_generator, optimizer_encoder],args)
+            train_with_gan_1(train_loader, generator, [substitute_model.f, clean_model.f], [optimizer_generator, optimizer_encoder],args)
             
-            train_stolen(substitute_model.f, clean_model.f, optimizer_encoder, args, train_loader)
+            # train_perturb([substitute_model.f, clean_model.f], train_loader,optimizer_encoder, args,epoch=epoch )
             
             test_acc = test(substitute_model.f, memory_loader, test_loader_clean ,epoch, args)
-            test_asr = test_robust(clean_model.f, net_target, substitute_model.f, test_loader_asr, None, 'pgd')
+            test_asr = test_robust(clean_model.f, net_target, substitute_model.f, test_loader_asr, generator, 'generator')
         else:
             raise NotImplementedError()
         if epoch % args.epochs == 0:
