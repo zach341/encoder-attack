@@ -52,3 +52,9 @@ class SimCLR(nn.Module):
         feature = self.f(x)
         out = self.g(feature)
         return F.normalize(feature, dim=-1), F.normalize(out, dim=-1)
+
+if __name__ == "__main__":
+    model_1 = SimCLR(arch='resnet34').f
+    x = torch.randn(64,3,32,32)
+    y = model_1(x)
+    print(y.shape)

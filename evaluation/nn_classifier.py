@@ -7,10 +7,9 @@ import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 from Loss import InfoNCE
-from advertorch.attacks import PGDAttack
+from advertorch.attacks import PGDAttack, LinfBasicIterativeAttack, GradientSignAttack,CarliniWagnerL2Attack
 import matplotlib.pyplot as plt
 import os
-from utils import get_gaussian_kernel
 from Loss import simlilary_loss
 
 
@@ -148,141 +147,90 @@ def predict_feature_adv(clone_encoder, test_loader, target_encoder, target=False
 
     return feature_bank.cpu().detach().numpy(), target_bank.cpu().detach().numpy()
 
-def test_robust(target_encoder, target_classifier, clone_encoder, test_loader, generator, method ='pgd'):
+def test_robust(target_encoder, target_classifier, clone_encoder, test_loader, generator, method ='PGD'):
     ## 测试扰动后的图像准确率
-    target_encoder.eval()
     target_classifier.eval()
+    target_encoder.eval()
     clone_encoder.eval()
     
-    cfgs = dict(test_step_size = 2.0/255, test_epsilon = 8.0/255)
-    correct = 0.0
-    correct_clean = 0.0
+    cfgs = dict(test_step_size = 2.0/255, test_epsilon = 10.0/255)
     sum = 0.0
     L2_distance_sum = 0.0
-    if method == 'pgd':
+    correct = 0.0
+    correct_ghost = 0.0
+    if method == 'PGD':
         adversary = PGDAttack(
             clone_encoder,
             loss_fn=simlilary_loss(),
             eps=cfgs['test_epsilon'],
             nb_iter=20, eps_iter=cfgs['test_step_size'], clip_min=0, clip_max=1, targeted=False
         )
-        for data in tqdm(test_loader):
-            inputs, labels = data
-            sum += inputs.size(0)
-            inputs, labels = inputs.cuda(), labels.cuda()
-            with torch.no_grad():
-                outputs = target_encoder(inputs)
-                outputs = F.normalize(outputs, dim = 1)
+    elif method == 'FGSM':
+        adversary = GradientSignAttack(
+            clone_encoder,
+            loss_fn=nn.CrossEntropyLoss(reduction="sum"),
+            eps=cfgs['test_epsilon'],
+            targeted=False)
+    elif method == 'BIM':
+        adversary = LinfBasicIterativeAttack(
+            clone_encoder,
+            loss_fn=simlilary_loss(),
+            eps=cfgs['test_epsilon'],
+            nb_iter=120, eps_iter=cfgs['test_step_size'], clip_min=0.0, clip_max=1.0,
+            targeted=False)
+    elif method == 'CW':
+        adversary = CarliniWagnerL2Attack(
+            clone_encoder,
+            num_classes=10,
+            learning_rate=0.45,
+            binary_search_steps=10,
+            max_iterations=20,
+            targeted=False)
+        
+    for data in test_loader:
+        inputs, labels = data
+        sum += inputs.size(0)
+        inputs, labels = inputs.cuda(non_blocking=True), labels.cuda(non_blocking=True)
+        with torch.no_grad():
+            outputs = target_encoder(inputs)
+            outputs = F.normalize(outputs, dim = 1)
 
-            adv_input_ori = adversary.perturb(inputs, outputs)
-            
-            # plt.subplot(121)
-            # plt.imshow(inputs[0,...].permute(1,2,0).detach().cpu())
-            # plt.axis('off')
-            # plt.subplot(122)
-            # plt.imshow(adv_input_ori[0,...].permute(1,2,0).detach().cpu())
-            # plt.axis('off')
-            # save_path = 'output/cifar10/pic'
-            # if not os.path.exists(save_path):
-            #     os.makedirs(save_path)
-            # plt.savefig(os.path.join(save_path, '2.png'), bbox_inches='tight',dpi=3000)
+        outputs_t = target_classifier(outputs)
+        _, t_label = torch.max(outputs_t.data, 1)
+        t_label = t_label.detach().cpu().numpy()
+        t_label = torch.from_numpy(t_label).cuda().long()
+        idx = torch.where(t_label == labels)[0]
+        correct += idx.shape[0]
+        adv_input_ori = adversary.perturb(inputs[idx], outputs[idx])
+        
+        ## show adversarial example
 
-            L2_distance = (adv_input_ori - inputs).squeeze()
-            L2_distance = (torch.linalg.norm(L2_distance.flatten(start_dim=1), dim=1)).data
-            L2_distance_sum +=L2_distance.sum()
-            # with torch.no_grad():
-            #     outputs = target_encoder(inputs)
-            #     outputs = F.normalize(outputs, dim = 1)
-            # output_clean = target_classifier(outputs)
-            # pred_clean = output_clean.argmax(dim=1, keepdim=True)
-            # #print(pred_clean.eq(labels.view_as(pred_clean)).sum().item())
-            # correct_clean += pred_clean.eq(labels.view_as(pred_clean)).sum().item()
-            
-            with torch.no_grad():
-                outputs = target_encoder(adv_input_ori)
-                outputs = F.normalize(outputs, dim = 1)
-            output_adv = target_classifier(outputs)
-            pred = output_adv.argmax(dim=1, keepdim=True)
-            #print(pred_clean.eq(labels.view_as(pred_clean)).sum().item())
-            correct += pred.eq(labels.view_as(pred)).sum().item()
+        # plt.subplot(121)
+        # plt.imshow(inputs[0,...].permute(1,2,0).detach().cpu())
+        # plt.axis('off')
+        # plt.subplot(122)
+        # plt.imshow(adv_input_ori[0,...].permute(1,2,0).detach().cpu())
+        # plt.axis('off')
+        # save_path = 'output/cifar10/pic'
+        # if not os.path.exists(save_path):
+        #     os.makedirs(save_path)
+        # plt.savefig(os.path.join(save_path, 'ttt.png'), bbox_inches='tight',dpi=3000)
 
-    elif method == 'generator':
-        if generator == None:
-            raise NotImplementedError
-        else:
-            # mean = [0.4914, 0.4822, 0.4465]
-            # std = [0.2023, 0.1994, 0.2010]
-            generator.eval()
-            kernel_size = 3
-            pad = 2
-            sigma = 1
-            # kernel = get_gaussian_kernel(kernel_size=kernel_size, pad=pad,sigma=sigma).cuda()
-            for data in tqdm(test_loader):
-                inputs, labels = data
-                sum += inputs.shape[0]
-                inputs, labels = inputs.cuda(), labels.cuda()
+        L2_distance = (adv_input_ori - inputs[idx]).squeeze()
+        L2_distance = (torch.linalg.norm(L2_distance.flatten(start_dim=1), dim=1)).data
+        L2_distance_sum +=L2_distance.sum()
+        
+        with torch.no_grad():
+            outputs = target_encoder(adv_input_ori)
+            outputs = F.normalize(outputs, dim = 1)
+        output_adv = target_classifier(outputs)
+        _, label_adv = torch.max(output_adv.data, 1)
+        label_adv = label_adv.detach().cpu().numpy()
+        predicted = torch.from_numpy(label_adv).cuda().long()
+        correct_ghost += (predicted != labels[idx]).sum()
 
-                ### filter out the samples that the target downstream classifier judges correctly                                    
-                # with torch.no_grad():
-                #     outputs = target_encoder(inputs)
-                #     outputs = F.normalize(outputs, dim=-1)
-                # outputs = target_classifier(outputs)
-                # pred = outputs.argmax(dim=1, keepdim=True)
-                # _, pred = torch.max(outputs.data, 1)
-                # idx = torch.where(pred != labels)[0]
-                # idxlen = len(idx)
-                # inputs, labels = inputs[idx], labels[idx]
-                # sum += idxlen
-                # print('xxx: ', inputs.shape[0])
-
-                ###################### The generator generates fixed noise ####################
-                # z = torch.randn(inputs.shape[0], 100).view(-1,100,1,1).cuda()
-                # uap_noise = generator(z).squeeze().cuda()
-                # uap_noise = torch.clamp(uap_noise, 0,1).cuda()
-                # adv_inputs = inputs + uap_noise.expand(inputs.shape)
-                # adv_inputs = adv_inputs.clamp(0, 1)
-                # inputs_show = (inputs * std) + mean
-                # adv_inputs_show = (adv_inputs * std) + mean
-
-                ################### The generator generates adversarial examples ######################
-                adv_inputs = generator(inputs).cuda()
-                adv_inputs = torch.min(torch.max(adv_inputs, inputs - 10/255), inputs + 10/255)
-                adv_inputs = torch.clamp(adv_inputs, 0.0, 1.0)
-                # adv_inputs = kernel(adv_inputs)
-                
-                # plt.subplot(121)
-                # plt.imshow(inputs[0,...].permute(1,2,0).detach().cpu())
-                # plt.axis('off')
-                # plt.subplot(122)
-                # plt.imshow(adv_inputs[0,...].permute(1,2,0).detach().cpu())
-                # plt.axis('off')
-                # save_path = 'output/cifar10/pic'
-                # if not os.path.exists(save_path):
-                #     os.makedirs(save_path)
-                # plt.savefig(os.path.join(save_path, '2.png'), bbox_inches='tight')
-                
-                L2_distance = (adv_inputs - inputs).squeeze()
-                L2_distance = (torch.linalg.norm(L2_distance.flatten(start_dim=1), dim=1)).data
-
-                L2_distance_sum += L2_distance.sum()
-                
-                with torch.no_grad():
-                    outputs = target_encoder(adv_inputs)
-                    outputs = F.normalize(outputs, dim = 1)
-                output_adv = target_classifier(outputs)
-                pred = output_adv.argmax(dim=1, keepdim=True)
-                #print(pred_clean.eq(labels.view_as(pred_clean)).sum().item())
-                correct += pred.eq(labels.view_as(pred)).sum().item()
-
-    # print(len(test_loader.dataset))
-
-    test_acc = 100. * correct / len(test_loader.dataset)
-
-    print('{{"metric": "Eval - {}", "value": {}, "epoch": {}, "L2_distance":{}}}'.format(
-        'adv_acc', 100. * correct / sum, 0, L2_distance_sum/ sum))
+    print('{{"metric": "Eval - {}", "value": {}, "epoch": {}, "L2_distance":{}, "val_acc":{} }}'.format(
+        'asr', 100. * correct_ghost / correct, 0, L2_distance_sum/ correct, 100. * correct / sum))
     
-    # print('{{"metric": "Eval - {}", "value": {}, "epoch": {}}}'.format(
-    #     'acc', 100. * correct_clean / sum, 0))
-
-    return test_acc
+    return 100. * correct_ghost / correct
 

@@ -23,16 +23,6 @@ def get_shadow_dataset(args):
     elif args.encoder_usage_info == 'stl10':
         return get_shadow_stl10(args)
 
-    # if args.shadow_dataset =='cifar10':
-    #     return get_shadow_cifar10(args)
-    # elif args.shadow_dataset == 'stl10':
-    #     return get_shadow_stl10(args)
-    # elif args.shadow_dataset == 'cifar10_224':
-    #     return get_shadow_cifar10_224(args)
-    # else:
-        # raise NotImplementedError
-
-
 def get_dataset_evaluation(args):
     if args.downstream_dataset == 'gtsrb':
         return get_downstream_gtsrb(args)
@@ -40,5 +30,7 @@ def get_dataset_evaluation(args):
         return get_downstream_svhn(args)
     elif args.downstream_dataset == 'stl10':
         return get_downstream_stl10(args)
+    elif args.downstream_dataset == 'cifar10':
+        return get_downstream_cifar10(args)
     else:
         raise NotImplementedError

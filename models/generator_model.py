@@ -3,8 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.parallel
 from torch.nn.utils import spectral_norm
-from utils import ScoreLoss, ImagePool
+from utils import ScoreLoss, ImagePool,MultiTransform
 from torchvision import transforms
+from kornia import augmentation
 
 nz = 128
 nc = 3
@@ -997,8 +998,8 @@ class Synthesizer():
 
         best_cost = 1e6
         best_inputs = None
-        # z = torch.randn(size=(self.sample_batch_size, self.nz)).cuda()  #
-        z = torch.randn(size=(self.sample_batch_size, 100, 1, 1)).cuda()
+        z = torch.randn(size=(self.sample_batch_size, self.nz)).cuda()  #
+        # z = torch.randn(size=(self.sample_batch_size, 100, 1, 1)).cuda()
         z.requires_grad = True
         targets = torch.randint(low=0, high=self.num_classes, size=(self.sample_batch_size,))
         targets = targets.sort()[0]
@@ -1008,7 +1009,7 @@ class Synthesizer():
         for it in range(self.iterations):
             optimizer.zero_grad()
             inputs = self.generator(z)  # bs,nz
-            # global_view, _ = self.aug(inputs)  # crop and normalize
+            global_view, _ = self.aug(inputs)  # crop
             global_view = inputs
 
             clone_feature_shadow = clone_encoder(global_view)

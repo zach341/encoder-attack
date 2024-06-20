@@ -134,18 +134,10 @@ def info_nce(query, positive_key, negative_keys=None, temperature=0.1, reduction
         labels = torch.arange(len(query), device=query.device)
 
     return F.cross_entropy(logits / temperature, labels, reduction=reduction)
-
-
 def transpose(x):
     return x.transpose(-2, -1)
-
-
 def normalize(*xs):
     return [None if x is None else F.normalize(x, dim=-1) for x in xs]
-
-def L_H(x):
-    p = x.mean(dim=0)
-    return (-p*p.log()).mean()
 
 class simlilary_loss(nn.Module):
     def __init__(self, reduction='mean') -> None:
