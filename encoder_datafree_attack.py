@@ -78,8 +78,8 @@ if __name__ == '__main__':
     ## /data/ZC/Dataset/imagenet_2_class_prompt_2500
     ## /data/ZC/Dataset/train2500
     ## /data/ZC/Dataset/imagenet_2_pic2pic_2500
-    parser.add_argument('--shadow_dataset_src', default='/data/ZC/Dataset/only_class_prompt_imagenet_2500', type=str, help='training data folder, the dataset use for substitute dataset')
-    parser.add_argument('--sub_encoder', default='/data/ZC/encoder_attack/output/ssl_custom_encoder/simclr-only_prompt_imagenet_2500-32-ep=999.ckpt', type=str, help='ssl subsititute encoder')
+    parser.add_argument('--shadow_dataset_src', default='/data/ZC/Dataset/cifar10_2500', type=str, help='training data folder, the dataset use for substitute dataset')
+    parser.add_argument('--sub_encoder', default='/data/ZC/encoder-attack/output/ssl_custom_encoder/simclr-cifar10_2500-36-ep=999.ckpt', type=str, help='ssl subsititute encoder')
 
     args = parser.parse_args()
 
@@ -109,7 +109,7 @@ if __name__ == '__main__':
     # Create the Pytorch Datasets, and  create the data loader for the training set 
 
     print('load dataset from:', args.shadow_dataset_src)
-    shadow_data = torchvision.datasets.ImageFolder(args.src, train_transform)
+    shadow_data = torchvision.datasets.ImageFolder(args.shadow_dataset_src, train_transform)
     train_loader = DataLoader(shadow_data, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True, drop_last=True)
     
     print('load encoder:', args.encoder)

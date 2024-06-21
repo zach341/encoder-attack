@@ -1,8 +1,6 @@
 from .simclr_model import SimCLR
 from .clip_model import CLIP
 from .imagenet_model import ImageNetResNet
-from .generator_model import Generator_2, Generator_4, Discriminator, CNN,\
-CNNCifar10, resnet18, resnet50, resnet34,GeneratorResnet, Synthesizer
 from .vit_model import Vitencoder
 from .effcientnet_model import Effcientencoder
 import torch
@@ -79,7 +77,7 @@ def load_victim(encoder_path, arch):
     if arch == 'resnet18':
         model = resnet18_1(num_classes=10)
     elif arch == 'resnet34':
-        model = resnet34_1(num_classes=20)
+        model = resnet34_1(num_classes=10)
     checkpoint = torch.load(encoder_path)
     state_dict = checkpoint['state_dict']
     # print('yyy: ', state_dict)
