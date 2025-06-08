@@ -4,6 +4,7 @@ import numpy as np
 
 
 test_transform_cifar10 = transforms.Compose([
+    
     transforms.ToTensor(),
     # transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
     ])
@@ -18,7 +19,8 @@ test_transform_imagenet = transforms.Compose([
 
 test_transform_CLIP = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),])
+    # transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+    ])
 
 classes = ['Speed limit 20km/h',
                         'Speed limit 30km/h',
@@ -68,16 +70,20 @@ classes = ['Speed limit 20km/h',
 def get_downstream_gtsrb(args):
     training_file_name = 'train.npz'
     testing_file_name = 'test.npz'
-
     if args.encoder_usage_info == 'cifar10':
         print('test_transform_cifar10')
         test_transform = test_transform_cifar10
     elif args.encoder_usage_info == 'stl10':
         print('test_transform_stl10')
         test_transform = test_transform_stl10
+    elif args.encoder_usage_info == 'CLIP':
+        print('test_transform_CLIP')
+        test_transform = test_transform_CLIP
+        training_file_name = 'train_224.npz'
+        testing_file_name = 'test_224.npz'
     else:
         raise NotImplementedError
-
+    
     memory_data = CIFAR10Mem(numpy_file=args.data_dir+training_file_name, class_type=classes, transform=test_transform)
     test_data_clean = CIFAR10Mem(numpy_file=args.data_dir+testing_file_name, class_type=classes, transform=test_transform)
 

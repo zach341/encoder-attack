@@ -11,25 +11,11 @@ def run_attack(encoder_usage_info, downstream_dataset,encoder,clean_encoder='mod
     --encoder_usage_info {encoder_usage_info} \
     --downstream_dataset {downstream_dataset} \
     --encoder {encoder} \
-    > ./log/substitute_encoder/{encoder_usage_info}_{downstream_dataset}_{encoder}_cifar10_2500_1000.log &'
+    > ./log/substitute_encoder/{encoder_usage_info}_{downstream_dataset}_{encoder}_stolen_encoder_tttttttt.log &'
     os.system(cmd)
-
-# run_attack('cifar10', 'imagenet', 'stl10','mocov3')
-# run_attack('cifar10', 'imagenet', 'gtsrb','mocov3')
-# run_attack('cifar10', 'imagenet', 'svhn','mocov3')
 
 run_attack('cifar10','stl10','simclr')
 run_attack('cifar10','gtsrb','simclr')
 run_attack('cifar10','svhn','simclr')
 
-# run_attack('cifar10', 'imagenet', 'stl10','dino')
-# run_attack('cifar10', 'imagenet', 'gtsrb','dino')
-# run_attack('cifar10', 'imagenet', 'svhn','dino')
-
-# run_attack('cifar10', 'imagenet', 'stl10','BYOL')
-# run_attack('cifar10', 'imagenet', 'gtsrb','BYOL')
-# run_attack('cifar10', 'imagenet', 'svhn','BYOL')
-
-#run_attack('stl10', 'imagenet', 'cifar10', 'BYOL')
-#run_attack('stl10', 'imagenet', 'gtsrb', 'BYOL')
-#run_attack('stl10', 'imagenet', 'svhn', 'BYOL')
+   

@@ -61,7 +61,6 @@ def get_shadow_cifar10(args):
     training_data_num = 50000
     testing_data_num = 10000
     np.random.seed(100)
-    #print('number of training examples:')
     training_data_sampling_indices = np.random.choice(training_data_num, training_data_num, replace=False)
     print('loading from the training data')
 
@@ -69,28 +68,6 @@ def get_shadow_cifar10(args):
     test_data_clean = CIFAR10Mem(numpy_file='data/cifar10/'+'test.npz', class_type=classes, transform=test_transform_cifar10)
 
     return memory_data, test_data_clean
-
-
-# def get_shadow_cifar10_224(args):
-#     training_data_num = 50000
-#     testing_data_num = 10000
-#     np.random.seed(100)
-#     training_data_sampling_indices = np.random.choice(training_data_num, training_data_num, replace=False)
-#     print('loading from the training data')
-
-#     shadow_dataset = BadEncoderDataset(
-#         numpy_file=args.data_dir+'train_224.npz',
-#         trigger_file=args.trigger_file,
-#         reference_file= args.reference_file,
-#         class_type=classes,
-#         indices = training_data_sampling_indices,
-#         transform=None,
-#         bd_transform=test_transform_CLIP,
-#         ftt_transform=finetune_transform_CLIP
-#     )
-
-#     return shadow_dataset, None, None, None
-
 
 def get_downstream_cifar10(args):
     training_file_name = 'train.npz'
@@ -114,7 +91,6 @@ def get_downstream_cifar10(args):
         testing_file_name = 'test_224.npz'
     else:
         raise NotImplementedError
-
 
     memory_data = CIFAR10Mem(numpy_file=args.data_dir+training_file_name, class_type=classes, transform=test_transform)
     test_data_clean = CIFAR10Mem(numpy_file=args.data_dir+testing_file_name, class_type=classes, transform=test_transform) # test.npz

@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.parallel
 from torch.nn.utils import spectral_norm
-from utils import ScoreLoss, ImagePool,MultiTransform
 from torchvision import transforms
 from kornia import augmentation
 
@@ -150,9 +149,9 @@ class Generator(nn.Module):
         return output
 
 
-class Generator_2(nn.Module):
+class Generator_base(nn.Module):
     def __init__(self, nz=100, ngf=64, img_size=32, nc=3):
-        super(Generator_2, self).__init__()
+        super(Generator_base, self).__init__()
 
         self.init_size = img_size // 4
         self.l1 = nn.Sequential(nn.Linear(nz, ngf * 2 * self.init_size ** 2))
@@ -315,6 +314,7 @@ class Generator_3(nn.Module):
         x = self.linear(x.permute(0, 2, 1).view(-1, self.dim // 16, H, W))
 
         return x
+    
 class CNNCifar10(nn.Module):
     def __init__(self):
         super(CNNCifar10, self).__init__()
@@ -484,7 +484,6 @@ class VGG(nn.Module):  # 定义VGG网络
  
     def forward(self, x):
         x = self.features(x)  # 特征提取层
-        # print(x.shape)
         x = self.avgpool(x)
         x = torch.flatten(x, start_dim=1)  # ddata维度为（batch_size,512，7，7），从第二个维度开始flatten
         x = self.classifier(x)  # 分类层
@@ -612,18 +611,9 @@ class DynamicGate(nn.Module):
         self.T = nn.Linear(in_channel, 1)
         self.threshold = threshold
     def forward(self, x):
-        # x = self.global_avg_pool(x).flatten
         x = self.global_avg_pool(x).flatten(start_dim=1)
-        # x = self.global_avg_pool(x).flatten(start_dim=1)
-        # print('xxx:', x.shape)
-        # print('shape', x.shape)
-        # print('x1', x.shape)
         x = self.T(x)
-        # print('x2', x.shape)
         x = torch.sigmoid(x)
-        # x = torch.softmax(x)
-        # gate = torch.where(x >= self.threshold, torch.tensor(1.0).cuda(), torch.tensor(0.0).cuda())
-        # return gate.view(*(gate.shape), 1, 1)
         return x.view(*(x.shape), 1, 1)
 
 class CNN_1(nn.Module):
@@ -657,12 +647,7 @@ class DynamicBlock(nn.Module):
 
     def __init__(self, in_planes, planes, stride=1):
         super(DynamicBlock, self).__init__()
-        # self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
-        # self.bn1 = nn.BatchNorm2d(planes)
-        # self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
-        # self.bn2 = nn.BatchNorm2d(planes)
         self.gate = DynamicGate(in_planes)
-        # self.gate = MS_CAM(in_planes)
 
         self.conv = nn.Sequential(
             nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False),
@@ -683,16 +668,9 @@ class DynamicBlock(nn.Module):
 
     def forward(self, x):
 
-        # out = F.relu(self.bn1(self.conv1(x)))
-        # out = self.bn2(self.conv2(out))
-        # print('shape', x.shape)
         mask = self.gate(x) # 动态门与动态注意力
-        # print('mask', mask)
-        # x = self.gate(x)
-        # print('mask:', mask)
         out = self.shortcut(x)
         out = out + (self.conv(x)*mask)   
-        # out = out +(self.conv(x))
         out = F.relu(out)
         return out
     
@@ -936,100 +914,7 @@ class GeneratorResnet(nn.Module):
             x = self.crop(x)
 
         return (torch.tanh(x) + 1) / 2 # Output range [0 1]
-
-class Synthesizer():
-    def __init__(self, generator, nz, num_classes, img_size,
-                 iterations, lr_g,
-                 sample_batch_size, save_dir, dataset):
-        super(Synthesizer, self).__init__()
-        self.img_size = img_size
-        self.iterations = iterations
-        self.lr_g = lr_g
-        self.nz = nz
-        self.score_loss = ScoreLoss()
-        self.num_classes = num_classes
-        self.sample_batch_size = sample_batch_size
-        self.save_dir = save_dir
-        self.data_pool = ImagePool(root=self.save_dir)
-        self.data_iter = None
-        self.dataset = dataset
-
-        self.generator = generator.cuda().train()
-
-        self.aug = MultiTransform([
-            # global view
-            transforms.Compose([
-                augmentation.RandomCrop(size=[self.img_size[-2], self.img_size[-1]], padding=4),
-                augmentation.RandomHorizontalFlip(),
-            ]),
-            # local view
-            transforms.Compose([
-                augmentation.RandomResizedCrop(size=[self.img_size[-2], self.img_size[-1]], scale=[0.25, 1.0]),
-                augmentation.RandomHorizontalFlip(),
-            ]),
-        ])
-        # =======================
-        if not ("cifar" in dataset):
-            self.transform = transforms.Compose(
-                [
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    # transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
-                ])
-        else:
-            self.transform = transforms.Compose(
-                [
-                    transforms.RandomCrop(32, padding=4),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    # transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
-                ])
-
-    def get_data(self):
-        datasets = self.data_pool.get_dataset(transform=self.transform)  # 获取程序运行到现在所有的图片
-        self.data_loader = torch.utils.data.DataLoader(
-            datasets, batch_size=64, shuffle=True,
-            num_workers=4, pin_memory=True, )
-        return self.data_loader
-
-    def gen_data_TEDF(self, clone_encoder, target_encoder):
-        clone_encoder.eval()
-        target_encoder.eval()
-
-        best_cost = 1e6
-        best_inputs = None
-        z = torch.randn(size=(self.sample_batch_size, self.nz)).cuda()  #
-        # z = torch.randn(size=(self.sample_batch_size, 100, 1, 1)).cuda()
-        z.requires_grad = True
-        targets = torch.randint(low=0, high=self.num_classes, size=(self.sample_batch_size,))
-        targets = targets.sort()[0]
-        targets = targets.cuda()
-        # reset_model(self.generator)
-        optimizer = torch.optim.Adam(self.generator.parameters(), self.lr_g, betas=[0.5, 0.999])
-        for it in range(self.iterations):
-            optimizer.zero_grad()
-            inputs = self.generator(z)  # bs,nz
-            global_view, _ = self.aug(inputs)  # crop
-            global_view = inputs
-
-            clone_feature_shadow = clone_encoder(global_view)
-            clone_feature_shadow = F.normalize(clone_feature_shadow, dim=-1)
-
-            target_feature_shadow = target_encoder(global_view)
-            target_feature_shadow = F.normalize(target_feature_shadow, dim=-1)
-
-            loss = torch.sum(clone_feature_shadow * target_feature_shadow, dim=-1).mean()
-
-            if best_cost > loss.item() or best_inputs is None:
-                best_cost = loss.item()
-                best_inputs = inputs.data
-
-            loss.backward()
-            optimizer.step()
-
-        # save best inputs and reset data iter
-        self.data_pool.add(best_inputs)  # 生成了一个batch的数据
-
+    
 if __name__ == '__main__':
     netG = GeneratorResnet()
     test_sample = torch.rand(64,3,224,224)

@@ -6,12 +6,21 @@ from torch.utils.data import TensorDataset, DataLoader
 import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
-from Loss import InfoNCE
-from advertorch.attacks import PGDAttack, LinfBasicIterativeAttack, GradientSignAttack,CarliniWagnerL2Attack
+from advertorch.attacks import PGDAttack
 import matplotlib.pyplot as plt
 import os
-from Loss import simlilary_loss
+from PIL import Image
 
+class simlilary_loss(nn.Module):
+    def __init__(self, reduction='mean') -> None:
+        super().__init__()
+        self.reduction = reduction
+    def forward(self, feature_raw, feature_target):
+        feature_raw = F.normalize(feature_raw, dim=-1)
+        loss = - torch.sum(feature_raw * feature_target, dim=-1)
+        if self.reduction == 'mean':
+            loss = loss.mean()
+        return loss
 
 class NeuralNet(nn.Module):
     def __init__(self, input_size, hidden_size_list, num_classes):
@@ -62,12 +71,10 @@ def net_train(net, train_loader, optimizer, epoch, criterion):
         optimizer.zero_grad()
         output = net(data)
         loss = criterion(output, label.long())
-
         loss.backward()
         optimizer.step()
         overall_loss += loss.item()
     print('Train Epoch: {} \tLoss: {:.6f}'.format(epoch, overall_loss*train_loader.batch_size/len(train_loader.dataset)))
-
 
 def net_test(net, test_loader, epoch, criterion, keyword='Accuracy'):
     ## 测试下游分类器的图像准确率
@@ -75,19 +82,21 @@ def net_test(net, test_loader, epoch, criterion, keyword='Accuracy'):
     net.eval()
     test_loss = 0.0
     correct = 0.0
-
+    sum = 0
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
             output = net(data)
             test_loss += criterion(output, target.long()).item()
             pred = output.argmax(dim=1, keepdim=True)
+            sum += target.shape[0]
             correct += pred.eq(target.view_as(pred)).sum().item()
 
-    test_acc = 100. * correct / len(test_loader.dataset)
-    test_loss /= len(test_loader.dataset)
+    print('sum count :', sum)
+    test_acc = 100. * correct / sum
+    test_loss /= sum
     print('{{"metric": "Eval - {}", "value": {}, "epoch": {}}}'.format(
-        keyword, 100. * correct / len(test_loader.dataset), epoch))
+        keyword, 100. * correct / sum, epoch))
 
     return test_acc
 
@@ -98,7 +107,7 @@ def predict_feature(net, data_loader):
     with torch.no_grad():
         # generate feature bank
         for data, target in tqdm(data_loader, desc='Feature extracting'):
-            feature = net(data.cuda(non_blocking=True))
+            feature = net.eval()(data.cuda(non_blocking=True))
             feature = F.normalize(feature, dim=1)
             feature_bank.append(feature)
             target_bank.append(target)
@@ -108,8 +117,11 @@ def predict_feature(net, data_loader):
 
     return feature_bank.cpu().detach().numpy(), target_bank.detach().numpy()
 
+
 def predict_feature_adv(clone_encoder, test_loader, target_encoder, target=False, method='pgd'):
-    ## 提取添加扰动后的图像特征
+    """
+    提取添加扰动后的图像特征
+    """
     cfgs = dict(test_step_size=2.0 / 255, test_epsilon = 8.0/255)
 
     clone_encoder.eval()
@@ -147,17 +159,17 @@ def predict_feature_adv(clone_encoder, test_loader, target_encoder, target=False
 
     return feature_bank.cpu().detach().numpy(), target_bank.cpu().detach().numpy()
 
-def test_robust(target_encoder, target_classifier, clone_encoder, test_loader, generator, method ='PGD'):
-    ## 测试扰动后的图像准确率
+
+def test_robust(target_encoder, target_classifier, clone_encoder, test_loader, method ='PGD'):
+    """
+    测试线性探测场景，扰动后的图像准确率
+    """
     target_classifier.eval()
     target_encoder.eval()
     clone_encoder.eval()
     
     cfgs = dict(test_step_size = 2.0/255, test_epsilon = 10.0/255)
-    sum = 0.0
-    L2_distance_sum = 0.0
-    correct = 0.0
-    correct_ghost = 0.0
+
     if method == 'PGD':
         adversary = PGDAttack(
             clone_encoder,
@@ -165,28 +177,12 @@ def test_robust(target_encoder, target_classifier, clone_encoder, test_loader, g
             eps=cfgs['test_epsilon'],
             nb_iter=20, eps_iter=cfgs['test_step_size'], clip_min=0, clip_max=1, targeted=False
         )
-    elif method == 'FGSM':
-        adversary = GradientSignAttack(
-            clone_encoder,
-            loss_fn=nn.CrossEntropyLoss(reduction="sum"),
-            eps=cfgs['test_epsilon'],
-            targeted=False)
-    elif method == 'BIM':
-        adversary = LinfBasicIterativeAttack(
-            clone_encoder,
-            loss_fn=simlilary_loss(),
-            eps=cfgs['test_epsilon'],
-            nb_iter=120, eps_iter=cfgs['test_step_size'], clip_min=0.0, clip_max=1.0,
-            targeted=False)
-    elif method == 'CW':
-        adversary = CarliniWagnerL2Attack(
-            clone_encoder,
-            num_classes=10,
-            learning_rate=0.45,
-            binary_search_steps=10,
-            max_iterations=20,
-            targeted=False)
-        
+    
+    # count_temp =0
+    sum = 0.0
+    L2_distance_sum = 0.0
+    correct = 0.0
+    correct_ghost = 0.0
     for data in test_loader:
         inputs, labels = data
         sum += inputs.size(0)
@@ -201,10 +197,11 @@ def test_robust(target_encoder, target_classifier, clone_encoder, test_loader, g
         t_label = torch.from_numpy(t_label).cuda().long()
         idx = torch.where(t_label == labels)[0]
         correct += idx.shape[0]
+        
         adv_input_ori = adversary.perturb(inputs[idx], outputs[idx])
         
-        ## show adversarial example
-
+        # show adversarial example
+        # count_temp = count_temp + 1
         # plt.subplot(121)
         # plt.imshow(inputs[0,...].permute(1,2,0).detach().cpu())
         # plt.axis('off')
@@ -214,8 +211,8 @@ def test_robust(target_encoder, target_classifier, clone_encoder, test_loader, g
         # save_path = 'output/cifar10/pic'
         # if not os.path.exists(save_path):
         #     os.makedirs(save_path)
-        # plt.savefig(os.path.join(save_path, 'ttt.png'), bbox_inches='tight',dpi=3000)
-
+        # plt.savefig(os.path.join(save_path, 'adv_{}.png'.format(count_temp)), bbox_inches='tight',dpi=6000)
+        
         L2_distance = (adv_input_ori - inputs[idx]).squeeze()
         L2_distance = (torch.linalg.norm(L2_distance.flatten(start_dim=1), dim=1)).data
         L2_distance_sum +=L2_distance.sum()
@@ -233,4 +230,64 @@ def test_robust(target_encoder, target_classifier, clone_encoder, test_loader, g
         'asr', 100. * correct_ghost / correct, 0, L2_distance_sum/ correct, 100. * correct / sum))
     
     return 100. * correct_ghost / correct
+
+
+def test_robust_finetune(target_encoder, net,clone_encoder, test_loader,method ='PGD'):
+    """
+    测试完全微调场景扰动后的图像准确率
+    """
+    target_encoder.eval()
+    net.eval()
+    clone_encoder.eval()
+    
+    cfgs = dict(test_step_size = 2.0/255, test_epsilon = 10.0/255)
+
+    if method == 'PGD':
+        adversary = PGDAttack(
+            clone_encoder,
+            loss_fn=simlilary_loss(),
+            eps=cfgs['test_epsilon'],
+            nb_iter=20, eps_iter=cfgs['test_step_size'], clip_min=0, clip_max=1, targeted=False
+        )
+    
+    # count_temp =0
+    sum = 0.0
+    L2_distance_sum = 0.0
+    correct = 0.0
+    correct_ghost = 0.0
+    for data in test_loader:
+        inputs, labels = data
+        sum += inputs.size(0)
+        inputs, labels = inputs.cuda(non_blocking=True), labels.cuda(non_blocking=True)
+        with torch.no_grad():
+            outputs_tt = target_encoder(inputs)
+            outputs_tt = F.normalize(outputs_tt, dim = 1)
+        
+        with torch.no_grad():
+            outputs_t = net(inputs)
+        _, t_label = torch.max(outputs_t.data, 1)
+        t_label = t_label.detach().cpu().numpy()
+        t_label = torch.from_numpy(t_label).cuda().long()
+        idx = torch.where(t_label == labels)[0]
+        correct += idx.shape[0]
+        
+        adv_input_ori = adversary.perturb(inputs[idx], outputs_tt[idx])
+        
+        L2_distance = (adv_input_ori - inputs[idx]).squeeze()
+        L2_distance = (torch.linalg.norm(L2_distance.flatten(start_dim=1), dim=1)).data
+        L2_distance_sum +=L2_distance.sum()
+        
+        with torch.no_grad():
+            outputs_adv = net(adv_input_ori)
+        _, label_adv = torch.max(outputs_adv.data, 1)
+        label_adv = label_adv.detach().cpu().numpy()
+        predicted = torch.from_numpy(label_adv).cuda().long()
+        correct_ghost += (predicted != labels[idx]).sum()
+
+    print('{{"metric": "Eval - {}", "value": {}, "epoch": {}, "L2_distance":{}, "val_acc":{} }}'.format(
+        'asr', 100. * correct_ghost / correct, 0, L2_distance_sum/ correct, 100. * correct / sum))
+    
+    return 100. * correct_ghost / correct
+
+
 
